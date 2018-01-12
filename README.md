@@ -1,7 +1,7 @@
 # aws-delete-securitygroups
 ### AWS Lambda function to delete orphaned SecurityGroups created by the ec2 launch wizard 
 
-### The Lambda gets triggered from a cloudwatch event rule (scheduled) 
+> The Lambda gets triggered from a cloudwatch event rule (scheduled) 
 
 #### Python Code
 
