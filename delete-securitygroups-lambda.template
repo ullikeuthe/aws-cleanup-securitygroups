@@ -1,0 +1,117 @@
+{
+   "AWSTemplateFormatVersion": "2010-09-09",
+   "Description": "v0.1 | DB Systel | Ulli Keuthe | Lambda function to delete orphaned launch-wizard security groups",
+   "Parameters": {
+    "CronJob": {
+      "Type": "String",
+      "Description": "Define when the lambda should check for violations",
+      "Default": "cron(0 5 ? * * *)"
+    }
+  },
+   "Resources": {
+      "DelSecGrpLambdaRole": {
+         "Type": "AWS::IAM::Role",
+         "Properties": {
+            "AssumeRolePolicyDocument": {
+               "Version" : "2012-10-17",
+               "Statement": [ {
+                  "Effect": "Allow",
+                  "Principal": {
+                     "Service": [ "lambda.amazonaws.com" ]
+                  },
+                  "Action": [ "sts:AssumeRole" ]
+               } ]
+            },
+            "Path": "/",
+            "RoleName": "DelSecGrpLambdaRole",
+            "Policies": [ {
+               "PolicyName": "BasicLambdaLogging",
+               "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "logs:CreateLogGroup",
+                                "logs:CreateLogStream",
+                                "logs:PutLogEvents"
+                            ],
+                            "Resource": "arn:aws:logs:*:*:*"
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [ "ec2:DescribeInstances", "ec2:DescribeSecurityGroups", "ec2:DeleteSecurityGroup" ],
+                            "Resource": "*"
+                        }
+                    ]
+                }
+            }]
+          }
+        },
+        "LambdaScript": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "FunctionName": "cleanup-security-groups",
+                "Handler": "index.lambda_handler",
+                "Description": "delete orphaned security-groups",
+                "Role": { "Fn::GetAtt" : ["DelSecGrpLambdaRole", "Arn"] },
+                "Code": {
+                    "ZipFile" : { "Fn::Join" : ["\n", [
+                        "import boto3",
+                        "def lambda_handler(event, context):",
+                        "    secgroups = {}",
+                        "    ec2 = boto3.client('ec2')",
+                        "    all_instances = ec2.describe_instances()",
+                        "    all_sg = ec2.describe_security_groups()",
+                        "    for sg in all_sg['SecurityGroups']:",
+                        "        if sg['GroupName'].startswith('launch-wizard'):",
+                        "            secgroups[sg['GroupId']] = True",
+                        "    for reservation in all_instances['Reservations']:",
+                        "        for instance in reservation['Instances']:", 
+                        "            for sg in instance['SecurityGroups']:",
+                        "                if sg['GroupId'] in secgroups:",
+                        "                    del secgroups[sg['GroupId']]",
+                        "    for g in secgroups:",
+                        "        ec2.delete_security_group(GroupId=g)",
+                        "    print('deleted the security-groups: '+ ' '.join(secgroups))",
+                        "    return 'done'"
+                      ]]}
+                },
+                "Runtime": "python3.6",
+                "Timeout": "30"
+            }
+        },
+        "CronEventRule": {
+            "Type": "AWS::Events::Rule",
+            "Properties": {
+              "Name": "cleanup-security-groups-event-rule",
+              "Description": "Trigger a Lambda function at a given time",
+              "ScheduleExpression": { "Ref": "CronJob" },
+              "State": "ENABLED",
+              "Targets": [
+                {
+                  "Arn": {
+                    "Fn::GetAtt": [
+                      "LambdaScript", "Arn"
+                    ]
+                  },
+                  "Id": "cleanup-security-groups-event-rule"
+                }
+              ]
+            }
+        },
+        "PermissionForLambda": {
+          "Type": "AWS::Lambda::Permission",
+          "Properties": {
+            "FunctionName": {
+              "Ref": "LambdaScript"
+            },
+            "Action": "lambda:InvokeFunction",
+            "Principal": "events.amazonaws.com",
+            "SourceArn": {
+              "Fn::GetAtt": [ "CronEventRule", "Arn" ]
+            }
+          }
+        }
+    }
+}
